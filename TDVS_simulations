@@ -1,0 +1,289 @@
+###########################################################
+# The R script file is to display how to perform          #
+# the simulation analyses in the paper, "Testing-driven   #
+# Variable Selection in Bayesian Modal Regression (TDVS)" #
+# by Jiasong Duan, Hongmei Zhang, and Xianzheng Huang.    #
+###########################################################
+rm(list=ls(all=TRUE))
+
+# Install the package from GitHub
+###########################################################
+# Detailed descriptions of the TDVS package are available # 
+# on its website: https://github.com/Jiasong-Duan/TDVS    #
+###########################################################
+# install.packages("devtools")
+devtools::install_github("Jiasong-Duan/TDVS")
+library(TDVS)
+
+# Generate data
+######################
+# Simulation setting #
+######################
+# error_scenario_set: the random error distribution used in the paper, 
+# where "1" produces the MixHat(nu=3, gamma=2), "2" generates Normal(0, 3), 
+# and "3" simulates 0.8Normal(0, 3) + 0.2Normal(5, 7)
+
+# n: number of observations
+# p: number of predictors
+# Y: response, n x 1 vector
+# X: predictors, n x p matrix
+# b0: regression intercept
+# betas: regression coefficients, p x 1 vector
+# meanvector: p x 1 mean vector of predictor, X
+# covariance_matrix: covariance of predictors, X
+# rho: correlation in blocks of covariance_matrix
+# n_MC: number of Monte Carlo replicates
+
+# Random error distribution
+error_scenario_set <- 1
+# p < n cases
+n <- 100
+p <- 8
+###############################
+# For p > n cases, change to: # 
+# n <- 30                    #
+# p <- 80                     #
+###############################
+meanvector <- rep(0, p)                                  
+covariance_matrix <- diag(p)
+# uncorrelated X
+rho <- 0 
+##############################
+# For correlated predictors, # 
+# change to:                  #
+# rho <- 0.5                 #
+##############################
+block <- matrix(rho, 2, 2) 
+Amat <- diag(p/2)
+covariance_matrix <- Amat %x% block  
+diag(covariance_matrix) <- 1
+b0 <- 2
+betas <- c(2, 0, 1, rep(0, p-3))
+Beta_set<- c(b0, betas)
+n_MC <- 300
+
+#function for simulating error in scenario 1 
+t_mixture_version2 <- function(gamma_t, nu, samplesize){
+  #Introduce z
+  prob=gamma_t^2/(1+gamma_t^2)
+  z=rbinom(samplesize,1,prob)
+  #generate truncated t
+  t_right=rtt(samplesize, location = 0, scale = gamma_t, df=nu, left = 0, right = Inf)
+  t_left=rtt(samplesize, location = 0, scale = 1/gamma_t, df=nu, left = -Inf, right = 0)
+  #Final t
+  t_gen=z*t_right+(1-z)*t_left
+  return(t_gen)
+}
+#function to generate model errors
+error_source <- function(scenario, gamma_sim=gamma_set, nu_sim=nu_set, n_sim=n,
+                         mean_Gau_sim=mean_Gau, sd_Gau_sim=sd_Gau,
+                         prop_HT_sim=out_prop, mean_HT_sim=out_mean, sd_HT_sim=out_sd){
+  if (scenario ==1){error_out <- t_mixture_version2(gamma_t=gamma_set, nu=nu_set, samplesize=n_sim)} 
+  else if (scenario ==2){error_out <- rnorm(n = n_sim, mean = mean_Gau_sim, sd =sd_Gau_sim)} 
+  else {  
+    error_Gau <- rnorm(n = n_sim, mean = mean_Gau_sim, sd =sd_Gau_sim)
+    outlier_index <- sample(1:n_sim, round(prop_HT_sim*n_sim, 0), replace=FALSE)
+    error_out <- error_Gau
+    error_out[outlier_index] <- error_out[outlier_index]+ rnorm(round(prop_HT_sim*n_sim, 0), mean=mean_HT_sim, sd=sd_HT_sim)}
+  return(error_out)
+}
+# error scenario 1
+nu_set <- 3
+gamma_set <- 2
+# error scenario 2 and 3
+mean_Gau <- 0
+sd_Gau <- sqrt(3)
+# error scenario 3
+out_prop <- 0.2
+out_mean <- 5
+out_sd <- 2
+
+# Install packages for data generation
+simul_packages <- c("crch", "MASS")
+for (sim in simul_packages) {
+  if (!requireNamespace(sim, quietly = TRUE)) {
+    message(sprintf("Installing missing package: %s", sim))
+    install.packages(sim)
+    message(sprintf("package %s installed successfully.", sim))
+  } else {
+    message(sprintf("package %s already installed.", sim))
+  }
+  library(sim, character.only = TRUE)
+}
+
+#Generate Monte Carlo data replicates
+data_MC <- sapply(1:n_MC, FUN=function(i){
+  set.seed(24*i)
+  errs <- error_source(scenario=error_scenario_set)
+  X_noInt <- mvrnorm(n = n, mu = meanvector, Sigma = covariance_matrix)
+  X <- cbind(1, X_noInt)
+  Y <- X %*% Beta_set+ errs
+  dat <-list(Y=Y, X=X_noInt)
+  dat
+})
+
+# Function to implement TDVS and summarize results for one data set
+TDVS_sum_fun <- function(datai, t0_set=t0_HT, t1_set=t1_HT, true_beta){
+    test.pvalues <- TDVS_multi_stage(dataXY=datai, init_beta_TDVS = rep(1, ncol(datai$X)), B_final = 200,
+                                     SS_t0_TDVS = t0_set, SS_t1_TDVS = t1_set)$p_values
+  composite_pvalues <- abs(test.pvalues)
+  tp_TDVS <- sum(composite_pvalues <= 0.05 & true_beta != 0); tn_TDVS <- sum(composite_pvalues > 0.05 & true_beta == 0)
+  fp_TDVS <- sum(composite_pvalues <= 0.05 & true_beta == 0); fn_TDVS <- sum(composite_pvalues > 0.05 & true_beta != 0)
+  num_pos <- sum(true_beta != 0); num_neg <- sum(true_beta == 0); num_p <- length(true_beta)
+  tpr_TDVS <- tp_TDVS/num_pos; fpr_TDVS <- fp_TDVS/num_neg; acc_TDVS <- (tp_TDVS+tn_TDVS)/num_p
+  parap.est <- TDVS_EM(dataXY=datai, init_beta = rep(1, ncol(datai$X)), SS_t0 = t0_set, SS_t1 = t1_set)
+  Optim_beta_obs <- parap.est$beta; Optim_beta0_obs <- parap.est$beta0
+  MSE_TDVS <- mean((Optim_beta_obs- true_beta)^2)
+  TDVS_out_vec <- c(tpr_TDVS, fpr_TDVS, acc_TDVS, MSE_TDVS)
+  names(TDVS_out_vec) <- c("tpr_TDVS", "fpr_TDVS", "acc_TDVS", "MSE_TDVS")
+  TDVS_out_vec
+}
+
+# Apply TDVS to every Monte Carlo data set
+# t0_HT is the spike hyperparameter
+t0_HT <- 10
+TDVS_out_mat <- sapply(1:n_MC, FUN=function(t){TDVS_sum_fun(datai=data_MC[,t], t0_set=t0_HT, t1_set=1, true_beta=betas)})  
+# Summarize results
+TDVS_table <- matrix(ncol=4, nrow=2)
+TDVS_table[1,] <- round(apply(TDVS_out_mat, MARGIN=1, mean),3)
+TDVS_table[2,] <- round(apply(TDVS_out_mat, MARGIN=1, FUN = function(r){sd(r)/sqrt(length(r))}),3)
+colnames(TDVS_table) <- c("TDVS_tpr", "TDVS_fpr", "TDVS_acc", "TDVS_MSE")
+row.names(TDVS_table) <- c("mean", "se")
+TDVS_table
+
+
+# For LASSO and SSLASSO
+# "SSLASSO" may need to be installed manually from the CRAN archive: https://cran.r-project.org/src/contrib/Archive/SSLASSO/
+vs_packages <- c("glmnet", "SSLASSO")
+for (vs in vs_packages) {
+  if (!requireNamespace(vs, quietly = TRUE)) {
+    message(sprintf("Installing missing package: %s", vs))
+    install.packages(vs)
+    message(sprintf("package %s installed successfully.", vs))
+  } else {
+    message(sprintf("package %s already installed.", vs))
+  }
+  library(vs, character.only = TRUE)
+}
+
+# For summarization
+num_pos <- sum(betas != 0); num_neg <- sum(betas == 0)
+# For LASSO
+tprs_LASSO <- rep(NA, n_MC); fprs_LASSO <- rep(NA, n_MC); accs_LASSO <- rep(NA, n_MC) 
+MSEs_LASSO <- rep(NA, n_MC)
+for (j in 1:n_MC){
+  print(j)
+  dataLASSO <- data_MC[,j]
+  lassolm <- cv.glmnet(x = dataLASSO$X, y = dataLASSO$Y)
+  beta.LASSO <- coef(lassolm, s = "lambda.1se")[-1]
+  
+  tp_LASSO <- sum(beta.LASSO != 0 & betas != 0); tn_LASSO <- sum(beta.LASSO == 0 & betas == 0)
+  fp_LASSO <- sum(beta.LASSO != 0 & betas == 0); fn_LASSO <- sum(beta.LASSO == 0 & betas != 0)
+  tpr_LASSO <- tp_LASSO/num_pos; fpr_LASSO <- fp_LASSO/num_neg; acc_LASSO <- (tp_LASSO+tn_LASSO)/p
+  tprs_LASSO[j] <- tpr_LASSO; fprs_LASSO[j] <- fpr_LASSO; accs_LASSO[j] <- acc_LASSO
+  MSE_LASSO <- mean((beta.LASSO- betas)^2)
+  MSEs_LASSO[j] <- MSE_LASSO
+}
+LASSO_table <- matrix(ncol=4, nrow=2)
+colnames(LASSO_table) <- c("LASSO_tpr", "LASSO_fpr", "LASSO_acc", "LASSO_MSE")
+row.names(LASSO_table) <- c("mean", "se")
+LASSO_table[, 1] <- round(c(mean(tprs_LASSO), sd(tprs_LASSO)/sqrt(n_MC)), 3)
+LASSO_table[, 2] <- round(c(mean(fprs_LASSO), sd(fprs_LASSO)/sqrt(n_MC)), 3)
+LASSO_table[, 3] <- round(c(mean(accs_LASSO), sd(accs_LASSO)/sqrt(n_MC)), 3)
+LASSO_table[, 4] <- round(c(mean(MSEs_LASSO), sd(MSEs_LASSO)/sqrt(n_MC)), 3)
+LASSO_table
+
+# For SSLASSO
+tprs_SSL <- rep(NA, n_MC); fprs_SSL <- rep(NA, n_MC); accs_SSL <- rep(NA, n_MC) 
+MSEs_SSL <- rep(NA, n_MC)
+for (k in 1:n_MC){
+  print(k)
+  dataSSL <- data_MC[,k]
+  SSL_unkn_var <- SSLASSO(dataSSL$X, dataSSL$Y, variance = "unknown")
+  beta.SSL <- SSL_unkn_var$beta[,ncol(SSL_unkn_var$beta)]
+  
+  tp_SSL <- sum(beta.SSL != 0 & betas != 0); tn_SSL <- sum(beta.SSL == 0 & betas == 0)
+  fp_SSL <- sum(beta.SSL != 0 & betas == 0); fn_SSL <- sum(beta.SSL == 0 & betas != 0)
+  tpr_SSL <- tp_SSL/num_pos; fpr_SSL <- fp_SSL/num_neg; acc_SSL <- (tp_SSL+tn_SSL)/p
+  tprs_SSL[k] <- tpr_SSL; fprs_SSL[k] <- fpr_SSL; accs_SSL[k] <- acc_SSL
+  MSE_SSL <- mean((beta.SSL- betas)^2)
+  MSEs_SSL[k] <- MSE_SSL
+}
+SSL_table <- matrix(ncol=4, nrow=2)
+colnames(SSL_table) <- c("SSL_tpr", "SSL_fpr", "SSL_acc", "SSL_MSE")
+row.names(SSL_table) <- c("mean", "se")
+SSL_table[, 1] <- round(c(mean(tprs_SSL), sd(tprs_SSL)/sqrt(n_MC)), 3)
+SSL_table[, 2] <- round(c(mean(fprs_SSL), sd(fprs_SSL)/sqrt(n_MC)), 3)
+SSL_table[, 3] <- round(c(mean(accs_SSL), sd(accs_SSL)/sqrt(n_MC)), 3)
+SSL_table[, 4] <- round(c(mean(MSEs_SSL), sd(MSEs_SSL)/sqrt(n_MC)), 3)
+SSL_table
+
+
+
+
+
+# When tuning of t0_HT is needed, implement the following cross-validation approach
+#tuning t0 functions
+cv_k <- function(k_index, data_cv_k, groups, t0_index, t1_index){
+  test_index <- as.vector(unlist(groups[k_index]))
+  
+  Y_train <- data_cv_k$Y[-test_index]
+  X_train <- data_cv_k$X[-test_index, ]
+  dat_train <-list(Y=Y_train, X=X_train)
+  
+  # Function TDVS_EM() is for parameter estimation
+  est_train <- TDVS_EM(dataXY=dat_train, init_beta = rep(1, ncol(dat_train$X)), SS_t0 = t0_index, SS_t1 = t1_index)
+  train_beta <- as.vector(est_train$beta)
+  train_beta0 <- as.numeric(est_train$beta0)
+  
+  y_test <- data_cv_k$Y[test_index]
+  x_test <- data_cv_k$X[test_index, ]
+  
+  predicterror <- y_test- train_beta0- x_test %*% train_beta
+  
+  mse_k <- mean(predicterror^2)
+  return(mse_k)
+}
+cv_t0 <- function(t0, num_k, data_cv, t1_cand=1){
+  set.seed(24)
+  ylength <- length(data_cv$Y)
+  cv_groups <- split(sample(1:ylength), rep_len(1:num_k, ylength))
+  cv_mse_t0 <- sapply(1:num_k, function(x)cv_k(k_index=x, data_cv_k=data_cv, groups=cv_groups, 
+                                               t0_index=t0, t1_index=t1_cand))
+  return(mean(cv_mse_t0))
+}
+
+# The updated function to implement TDVS and summarize results for one data set
+TDVS_sum_fun_tune <- function(datai, n_folds=10, n_t0=20, t1_set=t1_HT, true_beta=betas){
+  #Tune t0
+  set.seed(24)
+  t0_cand_seq <- exp(seq(0, log(length(datai$Y)), length.out=n_t0 ))
+  cv_predicterror <- sapply(t0_cand_seq, 
+                            function(y)cv_t0(t0=y, num_k=n_folds, data_cv=datai, t1_cand=t1_set))
+  t0_tuned <- t0_cand_seq[which.min(cv_predicterror)]
+  t0_set <- t0_tuned
+  # TDVS for variable selection
+  test.pvalues <- TDVS_multi_stage(dataXY=datai, init_beta_TDVS = rep(1, ncol(datai$X)), SS_t0_TDVS = t0_set, SS_t1_TDVS = t1_set)$p_values
+  # Summarize results
+  composite_pvalues <- abs(test.pvalues)
+  tp_TDVS <- sum(composite_pvalues <= 0.05 & true_beta != 0); tn_TDVS <- sum(composite_pvalues > 0.05 & true_beta == 0)
+  fp_TDVS <- sum(composite_pvalues <= 0.05 & true_beta == 0); fn_TDVS <- sum(composite_pvalues > 0.05 & true_beta != 0)
+  num_pos <- sum(true_beta != 0); num_neg <- sum(true_beta == 0); num_p <- length(true_beta)
+  tpr_TDVS <- tp_TDVS/num_pos; fpr_TDVS <- fp_TDVS/num_neg; acc_TDVS <- (tp_TDVS+tn_TDVS)/num_p
+  parap.est <- TDVS_EM(dataXY=datai, init_beta = rep(1, ncol(datai$X)), SS_t0 = t0_set, SS_t1 = t1_set)
+  Optim_beta_obs <- parap.est$beta; Optim_beta0_obs <- parap.est$beta0
+  MSE_TDVS <- mean((Optim_beta_obs- true_beta)^2)
+  TDVS_out_vec <- c(tpr_TDVS, fpr_TDVS, acc_TDVS, MSE_TDVS, t0_set)
+  names(TDVS_out_vec) <- c("tpr_TDVS", "fpr_TDVS", "acc_TDVS", "MSE_TDVS", "tuned_t0")
+  TDVS_out_vec
+}
+
+# Apply TDVS to every Monte Carlo data set
+TDVS_out_mat <- sapply(1:n_MC, FUN=function(t){TDVS_sum_fun_tune(datai=data_MC[,t], n_folds=10, n_t0=15, t1_set=1, true_beta=betas)})  
+# Summarize results
+TDVS_table <- matrix(ncol=4, nrow=2)
+TDVS_table[1,] <- round(apply(TDVS_out_mat, MARGIN=1, mean),3)[1:4]
+TDVS_table[2,] <- round(apply(TDVS_out_mat, MARGIN=1, FUN = function(r){sd(r)/sqrt(length(r))}),3)[1:4]
+colnames(TDVS_table) <- c("TDVS_tpr", "TDVS_fpr", "TDVS_acc", "TDVS_MSE")
+row.names(TDVS_table) <- c("mean", "se")
+TDVS_table
