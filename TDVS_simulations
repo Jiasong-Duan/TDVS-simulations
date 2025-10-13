@@ -122,10 +122,9 @@ data_MC <- sapply(1:n_MC, FUN=function(i){
   dat
 })
 
-# Function to implement TDVS and summarize results for one data set
+# Function to implement TDVS without pre-screening and summarize results for one data set
 TDVS_sum_fun <- function(datai, t0_set=t0_HT, t1_set=t1_HT, true_beta){
-    test.pvalues <- TDVS_multi_stage(dataXY=datai, init_beta_TDVS = rep(1, ncol(datai$X)), B_final = 200,
-                                     SS_t0_TDVS = t0_set, SS_t1_TDVS = t1_set)$p_values
+  test.pvalues <- TDVS(dataXY=datai, init_beta_TDVS = rep(1, ncol(datai$X)), SS_t0_TDVS = t0_set, SS_t1_TDVS = t1_set, B = 200)$p_values
   composite_pvalues <- abs(test.pvalues)
   tp_TDVS <- sum(composite_pvalues <= 0.05 & true_beta != 0); tn_TDVS <- sum(composite_pvalues > 0.05 & true_beta == 0)
   fp_TDVS <- sum(composite_pvalues <= 0.05 & true_beta == 0); fn_TDVS <- sum(composite_pvalues > 0.05 & true_beta != 0)
@@ -220,10 +219,8 @@ SSL_table
 
 
 
-
-
-# When tuning of t0_HT is needed, implement the following cross-validation approach
-#tuning t0 functions
+# For TDVS, When tuning of t0_HT is needed, implement the following cross-validation approach
+# tuning t0 functions
 cv_k <- function(k_index, data_cv_k, groups, t0_index, t1_index){
   test_index <- as.vector(unlist(groups[k_index]))
   
@@ -253,7 +250,7 @@ cv_t0 <- function(t0, num_k, data_cv, t1_cand=1){
   return(mean(cv_mse_t0))
 }
 
-# The updated function to implement TDVS and summarize results for one data set
+# The updated function to implement TDVS with pre-screening and summarize results for one data set
 TDVS_sum_fun_tune <- function(datai, n_folds=10, n_t0=20, t1_set=t1_HT, true_beta=betas){
   #Tune t0
   set.seed(24)
@@ -263,7 +260,7 @@ TDVS_sum_fun_tune <- function(datai, n_folds=10, n_t0=20, t1_set=t1_HT, true_bet
   t0_tuned <- t0_cand_seq[which.min(cv_predicterror)]
   t0_set <- t0_tuned
   # TDVS for variable selection
-  test.pvalues <- TDVS_multi_stage(dataXY=datai, init_beta_TDVS = rep(1, ncol(datai$X)), SS_t0_TDVS = t0_set, SS_t1_TDVS = t1_set)$p_values
+  test.pvalues <- TDVS_multi_stage(dataXY=datai, init_beta_TDVS = rep(1, ncol(datai$X)), SS_t0_TDVS = t0_set, SS_t1_TDVS = t1_set, B_final = 200)$p_values
   # Summarize results
   composite_pvalues <- abs(test.pvalues)
   tp_TDVS <- sum(composite_pvalues <= 0.05 & true_beta != 0); tn_TDVS <- sum(composite_pvalues > 0.05 & true_beta == 0)
