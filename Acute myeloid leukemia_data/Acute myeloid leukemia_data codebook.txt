@@ -1,0 +1,17 @@
+The two files contain the Acute myeloid leukemia data used in the study entitled "Testing-driven Variable Selection in Bayesian Modal Regression".
+
+1. File "Acute myeloid leukemia_response.csv".
+This file contains two columns corresponding to one identifier and response:
+"ID": de-identified identifiers for participants.  
+"FLT3": The response data, gene expression level of FLT3 quantified in Fragments Per Kilobase of transcript per Million mapped reads (FPKM).
+
+2. File "Acute myeloid leukemia_covariates.csv".
+This file contains eight columns corresponding to one identifier and seven candidate covariates:
+"ID": de-identified identifiers for participants.  
+"CEBPA": gene expression level of CEBPA quantified in FPKM.
+"NPM1": gene expression level of NPM1 quantified in FPKM.
+"KIT": gene expression level of KIT quantified in FPKM.
+"LAG3": gene expression level of LAG3 quantified in FPKM.
+"AML_gender": participant gender (1 = male, 0 = female).
+"AML_race": participant race (1 = White, 0 = Other).
+"AML_age": participant age (in years).
